@@ -2,13 +2,18 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <FS.h>
+#include <SD.h>
+#include <SPI.h>
 
+// OLED  Display
 #define SCREEN_WIDTH  128
 #define SCREEN_HEIGHT 64
 #define OLED_RESET    -1
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
+// Visualization 
 #define Y_AXIS_SPACE  20
 #define GRAPH_WIDTH   108 // 128 - 18
 #define GRAPH_HEIGHT  64
@@ -17,6 +22,16 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 uint8_t graphBufferSPL[GRAPH_WIDTH];
 uint8_t graphBufferdBA[GRAPH_WIDTH];
 
+// SD Card
+#define SD_ENABLE   9
+#define VSPI_MISO   13
+#define VSPI_MOSI   11
+#define VSPI_SCLK   12
+#define VSPI_SS     10
+
+SPIClass sdspi = SPIClass();
+
+// Enable the GPIO sockets
 #define IO_ENABLE   8
 
 // DFGravity SLM
@@ -91,6 +106,52 @@ void setupOLED() {
 }
 
 
+void setupSD() {
+  pinMode(SD_ENABLE, OUTPUT);
+  digitalWrite(SD_ENABLE, LOW);
+
+  delay(2000);
+  sdspi.begin(VSPI_SCLK,VSPI_MISO,VSPI_MOSI,VSPI_SS);
+  if(!SD.begin(VSPI_SS,sdspi)){
+      Serial.println("Card Mount Failed");
+      return;
+  }
+  uint8_t cardType = SD.cardType();
+
+  if(cardType == CARD_NONE){
+      Serial.println("No SD card attached");
+      return;
+  }
+
+  Serial.println("SD card initialized!");
+
+  // Create file with header
+  File file = SD.open("/dB-log.csv", FILE_WRITE);
+  if (file && file.size() == 0) {
+    file.println("timestamp_ms,dB_SPL,dBA");
+    file.close();
+  }
+
+  // Comment out if not needed
+  Serial.print("SD Card Type: ");
+  if(cardType == CARD_MMC){
+      Serial.println("MMC");
+  } else if(cardType == CARD_SD){
+      Serial.println("SDSC");
+  } else if(cardType == CARD_SDHC){
+      Serial.println("SDHC");
+  } else {
+      Serial.println("UNKNOWN");
+  }
+
+  uint64_t cardSize = SD.cardSize() / (1024 * 1024);
+  Serial.printf("SD Card Size: %lluMB\n", cardSize);
+
+  Serial.printf("Total space: %lluMB\n", SD.totalBytes() / (1024 * 1024));
+  Serial.printf("Used space: %lluMB\n", SD.usedBytes() / (1024 * 1024));
+}
+
+
 void setup() {
   // Enable GPIO pins for SLM
   pinMode(IO_ENABLE, OUTPUT);
@@ -98,6 +159,8 @@ void setup() {
 
   Serial.begin(115200);
   delay(1000);
+
+  setupSD();
   setupOLED();
   setupI2S();
 
@@ -187,6 +250,16 @@ void drawGraph(float dB_SPL, float dBA) {
   display.display();
 }
 
+void logToSD(fs::FS &fs, const char *path, unsigned long timestamp, float spl, float dba) {
+  File file = fs.open(path, FILE_APPEND);
+  if (!file) {
+    Serial.println("Failed to open file for appending");
+    return;
+  }
+  file.printf("%lu,%.2f,%.2f\n", timestamp, spl, dba);
+  file.close();
+}
+
 
 void loop() {
   size_t bytesRead = 0;
@@ -205,6 +278,10 @@ void loop() {
   Serial.printf("SPL: %.2f dB, dBA: %.2f\n", dB_SPL, dBA);
   // OLED
   drawGraph(dB_SPL, dBA);
+
+  // SD
+  unsigned long timestamp = millis();
+  logToSD(SD, "/dB-log.csv", timestamp, dB_SPL, dBA);
 
   delay(200);
 }
