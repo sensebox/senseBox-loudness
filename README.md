@@ -26,7 +26,7 @@ Note: The ICS mic has 4 data wires, so it uses two sockets. In my setup, I had o
 The SLM only uses only one data line.
 
 ## Usage
-1. Set up Arduino IDE for the senseBox MCU.
+1. Set up Arduino IDE for the senseBox MCU. (https://github.com/sensebox/senseBox-MCU-S2-ESP32S2)
 2. Install the Adafruit GFX and SSD1306 libraries.
 3. Connect the hardware as described, and insert the SD card. 
 4. Upload the code to the board.
