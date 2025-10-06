@@ -1,8 +1,12 @@
-// senseBox MCU (SAMD21) <- I2C -> Teensy 4.0 DNMS (-> ICS43434 mic)
+// senseBox MCU (SAMD21 or S2) <- I2C -> Teensy 4.0 DNMS (-> MEMS mic)
 // Reads LAeq (dBA) and LZeq (dBZ) after each Calculate command.
 
 #include <Wire.h>
-#include <senseBoxIO.h>
+// #include <senseBoxIO.h> // for senseBox MCU (SAMD)
+
+// senseBox MCU-S2 pins
+#define I2C_SDA           PIN_QWIIC_SDA
+#define I2C_SCL           PIN_QWIIC_SCL
 
 #define WINDOW_MS         1000      // audio collection window in ms, change for longer/shorter avg
 #define DNMS_I2C_ADDRESS  0x55      // as specified in Teensy's code
@@ -14,6 +18,8 @@
 #define DNMS_CMD_READ_DATA_READY  0x0004 // 4
 #define DNMS_CMD_READ_LAEQ        0x0005 // 5
 #define DNMS_CMD_READ_LZEQ        0x0011 // 17
+#define DNMS_SET_ICS43434         0x001B // 27
+#define DNMS_SET_IM72D128         0x001C // 28
 
 #define CRC8_POLYNOMIAL           0x31
 #define CRC8_INIT                 0xFF
@@ -93,32 +99,23 @@ static bool readLeqTriplet(uint16_t cmd, float &leq, float &min, float &max) {
   return readFloat6(raw+0, leq) && readFloat6(raw+6, min) && readFloat6(raw+12, max);
 }
 
-static void scan() {
-  Serial.println("I2C scan:");
-  for (uint8_t a=1;a<127;a++){
-    Wire.beginTransmission(a);
-    if (Wire.endTransmission()==0) { Serial.print("  0x"); Serial.println(a,HEX); }
-  }
-}
-
 
 void setup() {
-  pinMode(LED_BUILTIN, OUTPUT);
-
   Serial.begin(9600);
   while (!Serial) {}  // TODO Add DEBUG to not block when not connected to USB
 
   Serial.println("\nDNMS Teensy data reader (senseBox MCU)");
 
-  // Power rails used by the I2C header
-  senseBoxIO.powerI2C(false);
-  senseBoxIO.powerI2C(true);
+  // Wire.begin(); // sensebox MCU (SAMD)
+  // senseBoxIO.powerI2C(false);
+  // senseBoxIO.powerI2C(true);
 
-  Wire.begin();
+  Wire.begin(I2C_SDA, I2C_SCL); // sensebox MCU-S2
+  
   Wire.setClock(100000);
   Wire.setTimeout(50);
 
-  // scan(); // List I2C connections
+  writeCommand(DNMS_SET_IM72D128);
   
   // Warm-up time to let Teensy accumulate some audio before first CALCULATE 
   delay(10000); // 10s Teensy start up time till first readings
@@ -164,12 +161,12 @@ void loop() {
   //   Serial.println("READ_LZEQ failed (CRC/len)");
   // }
 
-  Serial.print("LAeq: "); Serial.print(laeq, 2); Serial.print('\t');
-  Serial.print("LAmin: "); Serial.print(la_min, 2); Serial.print('\t');
-  Serial.print("LAmax: "); Serial.println(la_max, 2);
-  // Serial.print("LZeq: "); Serial.print(lzeq, 2); Serial.print('\t');
-  // Serial.print("LZmin: "); Serial.print(lz_min, 2); Serial.print('\t');
-  // Serial.print("LZmax: "); Serial.println(lz_max, 2);
+  Serial.print("LAeq:"); Serial.print(laeq, 2); Serial.print('\t');
+  Serial.print("LAmin:"); Serial.print(la_min, 2); Serial.print('\t');
+  Serial.print("LAmax:"); Serial.println(la_max, 2);
+  // Serial.print("LZeq:"); Serial.print(lzeq, 2); Serial.print('\t');
+  // Serial.print("LZmin:"); Serial.print(lz_min, 2); Serial.print('\t');
+  // Serial.print("LZmax:"); Serial.println(lz_max, 2);
 
   // Wait until window length to request dB data
   next_calc = millis() + WINDOW_MS;
