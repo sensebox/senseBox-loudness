@@ -8,10 +8,11 @@
 #define I2C_SDA           PIN_QWIIC_SDA
 #define I2C_SCL           PIN_QWIIC_SCL
 
-#define WINDOW_MS         1000      // audio collection window in ms, change for longer/shorter avg
-#define DNMS_I2C_ADDRESS  0x55      // as specified in Teensy's code
+#define INTERVAL_MS               1000      // audio collection window in ms, change for longer/shorter avg
 
-// DNMS Teensy command codes
+// DNMS Teensy command codes (as specified in Teensy's code)
+#define DNMS_I2C_ADDRESS          0x55
+
 #define DNMS_CMD_RESET            0x0001 // 1
 #define DNMS_CMD_READ_VERSION     0x0002 // 2
 #define DNMS_CMD_CALCULATE_LEQ    0x0003 // 3
@@ -99,6 +100,13 @@ static bool readLeqTriplet(uint16_t cmd, float &leq, float &min, float &max) {
   return readFloat6(raw+0, leq) && readFloat6(raw+6, min) && readFloat6(raw+12, max);
 }
 
+// Print the three values for Arduino Serial Plotter
+static void printTripletPlot(float leq, float vmin, float vmax) {
+  Serial.print("LAeq"); Serial.print(':'); Serial.print(leq, 2);  Serial.print('\t');
+  Serial.print("LAmin"); Serial.print(':'); Serial.print(vmin, 2); Serial.print('\t');
+  Serial.print("LAmax"); Serial.print(':'); Serial.println(vmax, 2);
+}
+
 
 void setup() {
   Serial.begin(9600);
@@ -118,56 +126,42 @@ void setup() {
   writeCommand(DNMS_SET_IM72D128);
   
   // Warm-up time to let Teensy accumulate some audio before first CALCULATE 
-  delay(10000); // 10s Teensy start up time till first readings
+  delay(1000); // 1s Teensy start up time untill first readings
 }
 
 
 void loop() {
   static uint32_t next_calc = 0;
-  if (millis() < next_calc) return;
+  uint32_t now = millis();
 
-  // Ask Teensy to capture/compute a fresh block
-  if (!writeCommand(DNMS_CMD_CALCULATE_LEQ)) {
-    Serial.println("CALCULATE_LEQ failed");
-    next_calc = millis() + WINDOW_MS;
-    return;
+  if (now >= next_calc) {
+    // Send command to calculate dB 
+    if (!writeCommand(DNMS_CMD_CALCULATE_LEQ)) {
+      Serial.println("CALCULATE_LEQ failed");
+      next_calc = now + INTERVAL_MS;
+    } else {
+      uint16_t ready = 0;
+      uint32_t t0 = millis();
+
+      // Poll data-ready
+      while (millis() - t0 < 500) {
+        if (readDataReady(ready) && ready == 1) break;
+        delay(20);
+      }
+
+      if (ready == 1) {
+        // Read dBA triplet
+        float laeq, la_min, la_max;
+        if (readLeqTriplet(DNMS_CMD_READ_LAEQ, laeq, la_min, la_max)) {
+          printTripletPlot(laeq, la_min, la_max);
+        } else {
+          Serial.println("READ_LAEQ failed (CRC/len)");
+        }
+      } else {
+        Serial.println("Timeout waiting for data_ready");
+      }
+      // Wait until interval length to request dB data
+      next_calc = now + INTERVAL_MS;
+    }
   }
-
-  // Poll data-ready
-  uint16_t ready = 0;
-  uint32_t t0 = millis();
-  while (millis() - t0 < 500) {
-    if (readDataReady(ready) && ready == 1) break;
-    delay(20);
-  }
-
-  if (ready != 1) {
-    Serial.println("Timeout waiting for data_ready");    
-    next_calc = millis() + WINDOW_MS;
-    return;
-  }
-
-  // Read A-weighted triplet
-  float laeq= NAN, la_min= NAN, la_max= NAN;
-  if (!readLeqTriplet(DNMS_CMD_READ_LAEQ, laeq, la_min, la_max)) {
-    Serial.println("READ_LAEQ failed (CRC/len)");    
-    next_calc = millis() + WINDOW_MS;
-    return;
-  }
-
-  // Read Z-weighted triplet
-  // float lzeq= NAN, lz_min= NAN, lz_max= NAN;
-  // if (!readLeqTriplet(DNMS_CMD_READ_LZEQ, lzeq, lz_min, lz_max)) {
-  //   Serial.println("READ_LZEQ failed (CRC/len)");
-  // }
-
-  Serial.print("LAeq:"); Serial.print(laeq, 2); Serial.print('\t');
-  Serial.print("LAmin:"); Serial.print(la_min, 2); Serial.print('\t');
-  Serial.print("LAmax:"); Serial.println(la_max, 2);
-  // Serial.print("LZeq:"); Serial.print(lzeq, 2); Serial.print('\t');
-  // Serial.print("LZmin:"); Serial.print(lz_min, 2); Serial.print('\t');
-  // Serial.print("LZmax:"); Serial.println(lz_max, 2);
-
-  // Wait until window length to request dB data
-  next_calc = millis() + WINDOW_MS;
 }
