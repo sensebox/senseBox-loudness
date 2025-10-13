@@ -8,6 +8,16 @@
 #define I2C_SDA           PIN_QWIIC_SDA
 #define I2C_SCL           PIN_QWIIC_SCL
 
+// Uncomment the next line to get debugging messages printed on the Serial port
+#define ENABLE_DEBUG
+#ifdef ENABLE_DEBUG
+#define DEBUG(str) Serial.println(str)
+#define DEBUG2(str) Serial.print(str)
+#else
+#define DEBUG(str)
+#define DEBUG2(str)
+#endif
+
 #define INTERVAL_MS               1000      // audio collection window in ms, change for longer/shorter avg
 
 // DNMS Teensy command codes (as specified in Teensy's code)
@@ -109,10 +119,13 @@ static void printTripletPlot(float leq, float vmin, float vmax) {
 
 
 void setup() {
+  #ifdef ENABLE_DEBUG
+  // Initialize serial and wait for port to open:
   Serial.begin(9600);
-  while (!Serial) {}  // TODO Add DEBUG to not block when not connected to USB
+  while (!Serial) {}
+  #endif
 
-  Serial.println("\nDNMS Teensy data reader (senseBox MCU)");
+  DEBUG("\nDNMS Teensy data reader (senseBox MCU)");
 
   // Wire.begin(); // sensebox MCU (SAMD)
   // senseBoxIO.powerI2C(false);
@@ -137,7 +150,7 @@ void loop() {
   if (now >= next_calc) {
     // Send command to calculate dB 
     if (!writeCommand(DNMS_CMD_CALCULATE_LEQ)) {
-      Serial.println("CALCULATE_LEQ failed");
+      DEBUG("CALCULATE_LEQ failed");
       next_calc = now + INTERVAL_MS;
     } else {
       uint16_t ready = 0;
@@ -153,12 +166,14 @@ void loop() {
         // Read dBA triplet
         float laeq, la_min, la_max;
         if (readLeqTriplet(DNMS_CMD_READ_LAEQ, laeq, la_min, la_max)) {
+          #ifdef ENABLE_DEBUG
           printTripletPlot(laeq, la_min, la_max);
+          #endif
         } else {
-          Serial.println("READ_LAEQ failed (CRC/len)");
+          DEBUG("READ_LAEQ failed (CRC/len)");
         }
       } else {
-        Serial.println("Timeout waiting for data_ready");
+        DEBUG("Timeout waiting for data_ready");
       }
       // Wait until interval length to request dB data
       next_calc = now + INTERVAL_MS;
