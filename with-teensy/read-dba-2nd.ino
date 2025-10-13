@@ -12,13 +12,18 @@
 #define ENABLE_DEBUG
 #ifdef ENABLE_DEBUG
 #define DEBUG(str) Serial.println(str)
+#define DEBUG_ARGS(str,str1) Serial.println(str,str1)
 #define DEBUG2(str) Serial.print(str)
+#define DEBUG_WRITE(c) Serial.write(c)
 #else
 #define DEBUG(str)
+#define DEBUG_ARGS(str,str1)
 #define DEBUG2(str)
+#define DEBUG_WRITE(c)
 #endif
 
 #define INTERVAL_MS               1000      // audio collection window in ms, change for longer/shorter avg
+#define INTERVAL_MS_2nd           5000
 
 // DNMS Teensy command codes (as specified in Teensy's code)
 #define DNMS_I2C_ADDRESS          0x55
@@ -28,6 +33,9 @@
 #define DNMS_CMD_CALCULATE_LEQ    0x0003 // 3
 #define DNMS_CMD_READ_DATA_READY  0x0004 // 4
 #define DNMS_CMD_READ_LAEQ        0x0005 // 5
+#define DNMS_CMD_CALCULATE_LEQ_2nd    0x000A // 10
+#define DNMS_CMD_READ_DATA_READY_2nd  0x000B // 11
+#define DNMS_CMD_READ_LAEQ_2nd        0x000C // 12
 #define DNMS_CMD_READ_LZEQ        0x0011 // 17
 #define DNMS_SET_ICS43434         0x001B // 27
 #define DNMS_SET_IM72D128         0x001C // 28
@@ -111,51 +119,42 @@ static bool readLeqTriplet(uint16_t cmd, float &leq, float &min, float &max) {
 }
 
 // Print the three values for Arduino Serial Plotter
-static void printTripletPlot(float leq, float vmin, float vmax) {
-  Serial.print("LAeq"); Serial.print(':'); Serial.print(leq, 2);  Serial.print('\t');
-  Serial.print("LAmin"); Serial.print(':'); Serial.print(vmin, 2); Serial.print('\t');
-  Serial.print("LAmax"); Serial.print(':'); Serial.println(vmax, 2);
+static void printTripletPlot(uint8_t idx, float leq, float vmin, float vmax) {
+  Serial.print("LAeq"); Serial.print(idx); Serial.print(':'); Serial.print(leq, 2);  Serial.print('\t');
+  Serial.print("LAmin"); Serial.print(idx); Serial.print(':'); Serial.print(vmin, 2); Serial.print('\t');
+  Serial.print("LAmax"); Serial.print(idx); Serial.print(':'); Serial.println(vmax, 2);
 }
 
-static bool getLeqValues(uint32_t interval_ms, float &leq, float &min, float &max) {
-  static uint32_t next_calc = 0;
-  uint32_t now = millis();
-  if (now < next_calc) {
+static bool getLeqValues(uint8_t idx, uint16_t cmd_calc, uint16_t cmd_ready, uint16_t cmd_read, float &leq, float &min, float &max) {
+  // Send command to calculate dB 
+  if (!writeCommand(cmd_calc)) {
+    DEBUG("CALCULATE_LEQ failed");
     return false; 
   } else {
-    // Send command to calculate dB 
-    if (!writeCommand(DNMS_CMD_CALCULATE_LEQ)) {
-      DEBUG("CALCULATE_LEQ failed");
-      next_calc = now + interval_ms;
-      return false; 
-    } else {
-      uint16_t ready = 0;
-      uint32_t t0 = millis();
+    uint16_t ready = 0;
+    uint32_t t0 = millis();
 
-      // Poll data-ready
-      while (millis() - t0 < 500) {
-        if (readDataReady(DNMS_CMD_READ_DATA_READY, ready) && ready == 1) break;
-        delay(20);
-      }
+    // Poll data-ready
+    while (millis() - t0 < 500) {
+      if (readDataReady(cmd_ready, ready) && ready == 1) break;
+      delay(20);
+    }
 
-      if (ready == 1) {
-        // Read dBA triplet
-        if (readLeqTriplet(DNMS_CMD_READ_LAEQ, leq, min, max)) {
-          #ifdef ENABLE_DEBUG
-          printTripletPlot(leq, min, max);
-          #endif
-        } else {
-          DEBUG("READ_LAEQ failed (CRC/len)");
-          return false; 
-        }
+    if (ready == 1) {
+      // Read dBA triplet
+      if (readLeqTriplet(cmd_read, leq, min, max)) {
+        #ifdef ENABLE_DEBUG
+        printTripletPlot(idx, leq, min, max);
+        #endif
       } else {
-        DEBUG("Timeout waiting for data_ready");
+        DEBUG("READ_LAEQ failed (CRC/len)");
         return false; 
       }
-      // Wait until interval length to request dB data
-      next_calc = now + interval_ms;
-      return true;
+    } else {
+      DEBUG("Timeout waiting for data_ready");
+      return false; 
     }
+    return true;
   }
 }
 
@@ -186,7 +185,19 @@ void setup() {
 
 
 void loop() {
-  float laeq, la_min, la_max;
-  getLeqValues(INTERVAL_MS, laeq, la_min, la_max);
-  delay(2);
+  static uint32_t next_calc = 0;
+  static uint32_t next_calc_2nd = 0;
+
+  float laeq1, la_min1, la_max1;
+  float laeq2, la_min2, la_max2;
+  uint32_t now = millis();
+  if (now >= next_calc) {
+    getLeqValues(1, DNMS_CMD_CALCULATE_LEQ, DNMS_CMD_READ_DATA_READY, DNMS_CMD_READ_LAEQ, laeq1, la_min1, la_max1);
+    next_calc = now + INTERVAL_MS;  // Wait until interval length to request dB data
+  }
+  if (now >= next_calc_2nd) {
+    getLeqValues(2, DNMS_CMD_CALCULATE_LEQ_2nd, DNMS_CMD_READ_DATA_READY_2nd, DNMS_CMD_READ_LAEQ_2nd, laeq2, la_min2, la_max2);
+    next_calc_2nd = now + INTERVAL_MS_2nd;
+  }
+  delay(10);
 }
