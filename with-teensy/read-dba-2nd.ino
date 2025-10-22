@@ -34,6 +34,9 @@
 #define DNMS_CMD_CALCULATE_LEQ    0x0003 // 3
 #define DNMS_CMD_READ_DATA_READY  0x0004 // 4
 #define DNMS_CMD_READ_LAEQ        0x0005 // 5
+#define DNMS_CMD_CALCULATE_LEQ_2nd    0x000A // 10
+#define DNMS_CMD_READ_DATA_READY_2nd  0x000B // 11
+#define DNMS_CMD_READ_LAEQ_2nd        0x000C // 12
 #define DNMS_CMD_READ_LZEQ        0x0011 // 17
 #define DNMS_SET_ICS43434         0x001B // 27
 #define DNMS_SET_IM72D128         0x001C // 28
