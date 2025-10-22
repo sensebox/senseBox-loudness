@@ -24,6 +24,7 @@
 
 #define INTERVAL_MS               1000      // audio collection window in ms, change for longer/shorter avg
 #define INTERVAL_MS_2nd           5000
+#define DNMS_ERROR_COUNT_MAX      10        // reboot ESP32-S2 once exceeded
 
 // DNMS Teensy command codes (as specified in Teensy's code)
 #define DNMS_I2C_ADDRESS          0x55
@@ -33,9 +34,6 @@
 #define DNMS_CMD_CALCULATE_LEQ    0x0003 // 3
 #define DNMS_CMD_READ_DATA_READY  0x0004 // 4
 #define DNMS_CMD_READ_LAEQ        0x0005 // 5
-#define DNMS_CMD_CALCULATE_LEQ_2nd    0x000A // 10
-#define DNMS_CMD_READ_DATA_READY_2nd  0x000B // 11
-#define DNMS_CMD_READ_LAEQ_2nd        0x000C // 12
 #define DNMS_CMD_READ_LZEQ        0x0011 // 17
 #define DNMS_SET_ICS43434         0x001B // 27
 #define DNMS_SET_IM72D128         0x001C // 28
@@ -43,6 +41,8 @@
 #define CRC8_POLYNOMIAL           0x31
 #define CRC8_INIT                 0xFF
 #define CRC8_LEN                  1
+
+static uint32_t dnms_error_continuous = 0;
 
 
 static uint8_t crc8_word(const uint8_t *data) {
@@ -128,7 +128,7 @@ static void printTripletPlot(uint8_t idx, float leq, float vmin, float vmax) {
 static bool getLeqValues(uint8_t idx, uint16_t cmd_calc, uint16_t cmd_ready, uint16_t cmd_read, float &leq, float &min, float &max) {
   // Send command to calculate dB 
   if (!writeCommand(cmd_calc)) {
-    DEBUG("CALCULATE_LEQ failed");
+    handleError("Sending CALCULATE_LEQ command failed");
     return false; 
   } else {
     uint16_t ready = 0;
@@ -143,11 +143,12 @@ static bool getLeqValues(uint8_t idx, uint16_t cmd_calc, uint16_t cmd_ready, uin
     if (ready == 1) {
       // Read dBA triplet
       if (readLeqTriplet(cmd_read, leq, min, max)) {
+        dnms_error_continuous = 0;
         #ifdef ENABLE_DEBUG
         printTripletPlot(idx, leq, min, max);
         #endif
       } else {
-        DEBUG("READ_LAEQ failed (CRC/len)");
+        handleError("READ_LAEQ failed (CRC/len)");
         return false; 
       }
     } else {
@@ -158,6 +159,41 @@ static bool getLeqValues(uint8_t idx, uint16_t cmd_calc, uint16_t cmd_ready, uin
   }
 }
 
+static void handleError(const char *msg) {
+  dnms_error_continuous++;
+  #ifdef ENABLE_DEBUG
+    Serial.print("ERROR: "); Serial.print(msg);
+    Serial.print(" | continuous="); Serial.println(dnms_error_continuous);
+  #endif
+
+  if (dnms_error_continuous >= DNMS_ERROR_COUNT_MAX) {
+    ESP.restart();
+    while (true) {}
+  } else {
+    DEBUG2("Resetting Teensy after error");
+    while (!writeCommand(DNMS_CMD_RESET)) {
+      DEBUG2(".");
+      delay(50); // Endless waiting if Teensy never confirms reset (physical connection lost)
+    }
+    DEBUG2("\n");
+    writeCommand(DNMS_SET_IM72D128); // Not really needed unless Teensy is disconnected physically 
+  }
+}
+
+static void initDNMS() {
+  Wire.begin(I2C_SDA, I2C_SCL); // sensebox MCU-S2
+
+  // Wire.begin(); // sensebox MCU (SAMD)
+  // senseBoxIO.powerI2C(false);
+  // senseBoxIO.powerI2C(true);
+  
+  Wire.setClock(100000);
+  Wire.setTimeout(50);
+
+  writeCommand(DNMS_SET_IM72D128);
+  writeCommand(DNMS_CMD_RESET);
+} 
+
 
 void setup() {
   #ifdef ENABLE_DEBUG
@@ -167,20 +203,11 @@ void setup() {
   #endif
 
   DEBUG("\nDNMS Teensy data reader (senseBox MCU)");
-
-  // Wire.begin(); // sensebox MCU (SAMD)
-  // senseBoxIO.powerI2C(false);
-  // senseBoxIO.powerI2C(true);
-
-  Wire.begin(I2C_SDA, I2C_SCL); // sensebox MCU-S2
-  
-  Wire.setClock(100000);
-  Wire.setTimeout(50);
-
-  writeCommand(DNMS_SET_IM72D128);
+  delay(500); // Gives Teensy time to get a stable connection
+  initDNMS();
   
   // Warm-up time to let Teensy accumulate some audio before first CALCULATE 
-  delay(1000); // 1s Teensy start up time untill first readings
+  delay(1000); // Wait to collect enough data
 }
 
 
